@@ -1,6 +1,0 @@
-{
-    "model_name": "gpt-4o-mini",
-    "temperature": 0.1,
-    "max_tokens": 450,
-    "_type": "openai-chat"
-}
