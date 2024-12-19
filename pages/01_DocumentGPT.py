@@ -115,7 +115,7 @@ with st.sidebar:
 
 if file and api_key:
     llm = ChatOpenAI(
-        model="gpt-4o-mini",
+        # model="gpt-4o-mini",
         temperature=0.1,
         streaming=True,
         callbacks=[
