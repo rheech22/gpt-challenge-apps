@@ -1,13 +1,14 @@
 from langchain.prompts import ChatPromptTemplate
 from langchain.document_loaders import UnstructuredFileLoader
-from langchain.embeddings import CacheBackedEmbeddings, OpenAIEmbeddings
+from langchain.embeddings import OpenAIEmbeddings
 from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
-from langchain.storage import LocalFileStore
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.vectorstores.faiss import FAISS
 from langchain.chat_models import ChatOpenAI
 from langchain.callbacks.base import BaseCallbackHandler
 import streamlit as st
+import os
+import tempfile
 
 st.set_page_config(
     page_title="DocumentGPT",
@@ -31,23 +32,21 @@ class ChatCallbackHandler(BaseCallbackHandler):
 
 api_key: str | None = None
 
-@st.cache_data(show_spinner="Embedding file...")
+@st.spinner("Embedding file...")
 def embed_file(file, api_key):
-    file_content = file.read()
-    file_path = f"./.cache/files/{file.name}"
-    with open(file_path, "wb") as f:
-        f.write(file_content)
-    cache_dir = LocalFileStore(f"./.cache/embeddings/{file.name}")
+    _, file_extension = os.path.splitext(file.name)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
+        tmp_file.write(file.read())
+        tmp_file_path = tmp_file.name
+    loader = UnstructuredFileLoader(tmp_file_path)
     splitter = CharacterTextSplitter.from_tiktoken_encoder(
         separator="\n",
         chunk_size=600,
         chunk_overlap=100,
     )
-    loader = UnstructuredFileLoader(file_path)
     docs = loader.load_and_split(text_splitter=splitter)
     embeddings = OpenAIEmbeddings(api_key=api_key)
-    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
-    vectorstore = FAISS.from_documents(docs, cached_embeddings)
+    vectorstore = FAISS.from_documents(docs, embeddings)
     retriever = vectorstore.as_retriever()
     return retriever
 
