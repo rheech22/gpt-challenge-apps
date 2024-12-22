@@ -1,38 +1,60 @@
 import json
 import streamlit as st
+
+from pathlib import Path
 from langchain.retrievers import WikipediaRetriever
 from langchain.text_splitter import CharacterTextSplitter
 from langchain.document_loaders import UnstructuredFileLoader
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.callbacks import StreamingStdOutCallbackHandler
-from langchain.schema import BaseOutputParser
-from langchain.schema.runnable import RunnablePassthrough
-class JsonOutputParser(BaseOutputParser):
-    def parse(self, text):
-        text = text.replace("```", "").replace("json", "")
-        return json.loads(text)
-
-output_parser = JsonOutputParser()
 
 st.set_page_config(
     page_title="QuizGPT",
     page_icon="❓",
 )
 
-def format_docs(docs):
-    return "\n\n".join(document.page_content for document in docs)
+st.title("QuizGPT")
 
-llm = ChatOpenAI(
-    temperature=0.1,
-    model_name="gpt-4o-mini",
-    streaming=True,
-    callbacks=[
-        StreamingStdOutCallbackHandler(),
-    ]
-)
+function = {
+    "name": "make_quiz",
+    "description": "It takes a list of questions, answers and makes a quiz.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                        },
+                        "answers": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "answer": {
+                                        "type": "string",
+                                    },
+                                    "correct": {
+                                        "type": "boolean",
+                                    },
+                                },
+                                "required": ["answer", "correct"],
+                            },
+                        },
+                    },
+                    "required": ["question", "answers"],
+                },
+            }
+        },
+        "required": ["questions"],
+    },
+}
 
-questions_prompt = ChatPromptTemplate.from_messages(
+prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
@@ -48,6 +70,8 @@ questions_prompt = ChatPromptTemplate.from_messages(
     There is two different kinds of level, easy and hard.
 
     The easy level is for the beginner and the hard level is for the advanced.
+
+    if level is hard, you should make a question that is more difficult than easy level.
 
     The DIFFICULTY of the question is determined by the level of the question.
 
@@ -68,8 +92,8 @@ questions_prompt = ChatPromptTemplate.from_messages(
     Question: When was Avatar released?
     Answers: 2007|2001|2009(o)|1998
 
-    Question: Who was Julius Caesar?
-    Answers: A Roman Emperor(o)|Painter|Actor|Model
+    Question: How many countries are in the world?
+    Answers: 195|196(o)|197|198
          
     Your turn!
          
@@ -79,140 +103,15 @@ questions_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-
-
-
-questions_chain = questions_prompt | llm
-
-formatting_prompt = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            """
-    You are a powerful formatting algorithm.
-     
-    You format exam questions into JSON format.
-    Answers with (o) are the correct ones.
-     
-    Example Input:
-    Question: What is the color of the ocean?
-    Answers: Red|Yellow|Green|Blue(o)
-         
-    Question: What is the capital or Georgia?
-    Answers: Baku|Tbilisi(o)|Manila|Beirut
-         
-    Question: When was Avatar released?
-    Answers: 2007|2001|2009(o)|1998
-         
-    Question: Who was Julius Caesar?
-    Answers: A Roman Emperor(o)|Painter|Actor|Model
-    
-     
-    Example Output:
-     
-    ```json
-    {{ "questions": [
-            {{
-                "question": "What is the color of the ocean?",
-                "answers": [
-                        {{
-                            "answer": "Red",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Yellow",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Green",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Blue",
-                            "correct": true
-                        }},
-                ]
-            }},
-                        {{
-                "question": "What is the capital or Georgia?",
-                "answers": [
-                        {{
-                            "answer": "Baku",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Tbilisi",
-                            "correct": true
-                        }},
-                        {{
-                            "answer": "Manila",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Beirut",
-                            "correct": false
-                        }},
-                ]
-            }},
-                        {{
-                "question": "When was Avatar released?",
-                "answers": [
-                        {{
-                            "answer": "2007",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "2001",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "2009",
-                            "correct": true
-                        }},
-                        {{
-                            "answer": "1998",
-                            "correct": false
-                        }},
-                ]
-            }},
-            {{
-                "question": "Who was Julius Caesar?",
-                "answers": [
-                        {{
-                            "answer": "A Roman Emperor",
-                            "correct": true
-                        }},
-                        {{
-                            "answer": "Painter",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Actor",
-                            "correct": false
-                        }},
-                        {{
-                            "answer": "Model",
-                            "correct": false
-                        }},
-                ]
-            }}
-        ]
-     }}
-    ```
-    Your turn!
-    Questions: {context}
-""",
-        )
-    ]
-)
-
-formatting_chain = (lambda input: { "context": input.content }) | formatting_prompt | llm
+def format_docs(docs):
+    return "\n\n".join(document.page_content for document in docs)
 
 @st.cache_data(show_spinner="Loading file...")
 def split_file(file):
     file_content = file.read()
     file_path = f"./.cache/quiz_files/{file.name}"
-    with open(file_path, "wb") as f:
+    Path("./.cache/quiz_files").mkdir(parents=True, exist_ok=True)
+    with open(file_path, "wb+") as f:
         f.write(file_content)
     splitter = CharacterTextSplitter.from_tiktoken_encoder(
         separator="\n",
@@ -225,7 +124,7 @@ def split_file(file):
 
 @st.cache_data(show_spinner="Making Quiz...")
 def make_quiz(_docs, topic, level):
-    chain = questions_chain | formatting_chain | output_parser
+    chain = prompt | llm
     return chain.invoke({
         "context": format_docs(_docs),
         "level": level,
@@ -236,13 +135,11 @@ def wiki_search(term):
     retriever = WikipediaRetriever(top_k_results=5, lang="ko")
     return retriever.get_relevant_documents(term)
 
-st.title("QuizGPT")
-
 with st.sidebar:
     docs = None
     topic = None
-    
     openai_api_key = st.text_input("Input your OpenAI API Key")
+
     level = st.selectbox(
         "Choose level of difficulty",
         (
@@ -250,6 +147,7 @@ with st.sidebar:
             "Hard",
         )
     )
+
     choice = st.selectbox(
         "Choose what u want to use",
         (
@@ -257,15 +155,16 @@ with st.sidebar:
             "Wikipedia Article",
         )
     )
+
     if choice == "File":
         file = st.file_uploader("Upload a .docx, .txt or .pdf file", type=["docx", "txt", "pdf"])
         if file:
             docs = split_file(file)
-            # st.write(docs)
     else:
         topic = st.text_input("Search Wikipedia for a topic")
         if topic:
             docs = wiki_search(topic)
+
 
 if not (docs and openai_api_key):
     st.markdown(
@@ -274,11 +173,27 @@ if not (docs and openai_api_key):
         """
     )
 else:
-    st.write(level)
-    quiz = make_quiz(docs, topic if topic else file.name, level)
-    st.write(quiz)
+    llm = ChatOpenAI(
+        temperature=0.1,
+        # model_name="gpt-4o-mini",
+        streaming=True,
+        callbacks=[StreamingStdOutCallbackHandler()],
+        openai_api_key=openai_api_key,
+    ).bind(
+        function_call={
+            "name": "make_quiz",
+        },
+        functions=[
+            function,
+        ],
+    )
+    make_quiz_result = make_quiz(docs, topic if topic else file.name, level)
+    quiz = make_quiz_result.additional_kwargs["function_call"]["arguments"]
     with st.form("questions_form"):
-        for q in quiz["questions"]:
+        questions = json.loads(quiz)["questions"]
+        question_count = len(questions)
+        success_count = 0
+        for q in questions:
             st.write(q["question"])
             value = st.radio(
                 "Select an answer.",
@@ -287,6 +202,9 @@ else:
             )
             if { "answer": value, "correct": True } in q["answers"]:
                 st.success("Correct answer !")
+                success_count += 1
             elif value is not None:
                 st.error("Wrong answer !")
+        if question_count == success_count:
+            st.balloons()
         button = st.form_submit_button()
