@@ -7,6 +7,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.callbacks import StreamingStdOutCallbackHandler
 from langchain.schema import BaseOutputParser
+from langchain.schema.runnable import RunnablePassthrough
 class JsonOutputParser(BaseOutputParser):
     def parse(self, text):
         text = text.replace("```", "").replace("json", "")
@@ -43,20 +44,30 @@ questions_prompt = ChatPromptTemplate.from_messages(
     Each question should have 4 answers, three of them must be incorrect and one should be correct.
 
     if context language is Korean, you should make a question by Korean.
+
+    There is two different kinds of level, easy and hard.
+
+    The easy level is for the beginner and the hard level is for the advanced.
+
+    The DIFFICULTY of the question is determined by the level of the question.
+
+    The current level is {level}.
          
     Use (o) to signal the correct answer.
          
-    Question examples:
+    Question examples(Easy):
          
     Question: What is the color of the ocean?
     Answers: Red|Yellow|Green|Blue(o)
          
     Question: What is the capital or Georgia?
     Answers: Baku|Tbilisi(o)|Manila|Beirut
-         
+
+    Question examples(Hard):
+
     Question: When was Avatar released?
     Answers: 2007|2001|2009(o)|1998
-         
+
     Question: Who was Julius Caesar?
     Answers: A Roman Emperor(o)|Painter|Actor|Model
          
@@ -68,16 +79,10 @@ questions_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-# There is two different kinds of level, easy and hard.
-
-#     The easy level is for the beginner and the hard level is for the advanced.
-
-#     The difficulty of the question is determined by the level of the question.
-
-#     The current level is {level}
 
 
-questions_chain = {"context": format_docs } | questions_prompt | llm
+
+questions_chain = questions_prompt | llm
 
 formatting_prompt = ChatPromptTemplate.from_messages(
     [
@@ -201,7 +206,7 @@ formatting_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-formatting_chain = formatting_prompt | llm
+formatting_chain = (lambda input: { "context": input.content }) | formatting_prompt | llm
 
 @st.cache_data(show_spinner="Loading file...")
 def split_file(file):
@@ -219,9 +224,12 @@ def split_file(file):
     return docs
 
 @st.cache_data(show_spinner="Making Quiz...")
-def make_quiz(_docs, topic):
-    chain = {"context": questions_chain } | formatting_chain | output_parser
-    return chain.invoke(_docs)
+def make_quiz(_docs, topic, level):
+    chain = questions_chain | formatting_chain | output_parser
+    return chain.invoke({
+        "context": format_docs(_docs),
+        "level": level,
+    })
 
 @st.cache_data(show_spinner="Making Quiz...")
 def wiki_search(term):
@@ -267,7 +275,7 @@ if not (docs and openai_api_key):
     )
 else:
     st.write(level)
-    quiz = make_quiz(docs, topic if topic else file.name)
+    quiz = make_quiz(docs, topic if topic else file.name, level)
     st.write(quiz)
     with st.form("questions_form"):
         for q in quiz["questions"]:
