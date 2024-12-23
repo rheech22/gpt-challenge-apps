@@ -2,17 +2,15 @@ from langchain.document_loaders import SitemapLoader
 from langchain.schema.runnable import RunnableLambda, RunnablePassthrough
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.vectorstores.faiss import FAISS
-from langchain.embeddings import OpenAIEmbeddings
+from langchain.embeddings import OpenAIEmbeddings, CacheBackedEmbeddings
 from langchain.chat_models import ChatOpenAI
+from langchain.storage import LocalFileStore
 from langchain.prompts import ChatPromptTemplate
+from langchain.callbacks.base import BaseCallbackHandler
+from pathlib import Path
 import streamlit as st
 
 CLOUDFLARE_SITEMAP_URL = 'https://developers.cloudflare.com/sitemap-0.xml'
-
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.1,
-)
 
 answers_prompt = ChatPromptTemplate.from_template(
     """
@@ -42,7 +40,6 @@ answers_prompt = ChatPromptTemplate.from_template(
 """
 )
 
-
 def get_answers(inputs):
     docs = inputs["docs"]
     question = inputs["question"]
@@ -60,7 +57,6 @@ def get_answers(inputs):
             for doc in docs
         ],
     }
-
 
 choose_prompt = ChatPromptTemplate.from_messages(
     [
@@ -80,8 +76,8 @@ choose_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-
 def choose_answer(inputs):
+    llm.streaming = True
     answers = inputs["answers"]
     question = inputs["question"]
     choose_chain = choose_prompt | llm
@@ -96,7 +92,6 @@ def choose_answer(inputs):
         }
     )
 
-
 def parse_page(soup):
     header = soup.find("header")
     footer = soup.find("footer")
@@ -110,12 +105,8 @@ def parse_page(soup):
         .replace("\xa0", " ")
     )
 
-@st.cache_data(show_spinner="Loading data of CloudFlare...")
-def load_docs():
-    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-        chunk_size=1000,
-        chunk_overlap=200,
-    )
+@st.cache_data(show_spinner="Loading data...")
+def load_docs(api_key): 
     loader = SitemapLoader(
         CLOUDFLARE_SITEMAP_URL,
         filter_urls=[
@@ -126,9 +117,19 @@ def load_docs():
         parsing_function=parse_page,
     )
     loader.requests_per_second = 2
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        chunk_size=1000,
+        chunk_overlap=200,
+    )
     docs = loader.load_and_split(text_splitter=splitter)
-    st.write(docs)
-    vector_store = FAISS.from_documents(docs, OpenAIEmbeddings())
+
+    Path("./.cache/embeddings").mkdir(parents=True, exist_ok=True)
+    cache_dir = LocalFileStore(f"./.cache/embeddings/cloudflare")
+    embeddings = OpenAIEmbeddings(
+        openai_api_key=api_key,
+    )
+    cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
+    vector_store = FAISS.from_documents(docs, cached_embeddings)
     return vector_store.as_retriever()
 
 
@@ -137,28 +138,54 @@ st.set_page_config(
     page_icon="🖥️",
 )
 
-
-st.markdown(
-    """
-    # SiteGPT
-            
-    Ask questions about the content of a website.
-            
-    Start by writing the URL of the website on the sidebar.
-"""
-)
-
-
 with st.sidebar:
     api_key = st.text_input(
-        "Write down an API Key Of OpenAI",
+        "Write down your OpenAI API Key",
         placeholder="sh-123213123123123123123",
     )
 
+def save_message(message, role):
+    st.session_state["messages"].append({"message": message, "role": role})
+
+def send_message(message, role, save=True):
+    with st.chat_message(role):
+        st.markdown(message)
+    if save:
+        save_message(message, role)
+
+def paint_history():
+    for message in st.session_state["messages"]:
+        send_message(
+            message["message"],
+            message["role"],
+            save=False,
+        )
+
+class ChatCallbackHandler(BaseCallbackHandler):
+    message = ""
+    def on_llm_start(self, *args, **kwargs):
+        self.message_box = st.empty()
+    def on_llm_end(self, *args, **kwargs):
+        save_message(self.message, "ai")
+    def on_llm_new_token(self, token, *args, **kwargs):
+        self.message += token
+        self.message_box.markdown(self.message)
+
 if api_key:
-    retriever = load_docs()
-    query = st.text_input("Ask a question to the website.")
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.1,
+        openai_api_key=api_key,
+        callbacks=[
+            ChatCallbackHandler(),
+        ],
+    )
+    retriever = load_docs(api_key)
+    send_message("I'm ready! Ask away!", "ai", save=False)
+    paint_history()
+    query = st.chat_input("Ask a question about Cloudflare...")
     if query:
+        send_message(query, "human")
         chain = (
             {
                 "docs": retriever,
@@ -167,5 +194,17 @@ if api_key:
             | RunnableLambda(get_answers)
             | RunnableLambda(choose_answer)
         )
-        result = chain.invoke(query)
-        st.markdown(result.content.replace("$", "\$"))
+        with st.chat_message("ai"):
+            response = chain.invoke(query)
+else:
+    st.markdown(
+        """
+    Welcome!
+                
+    Use this chatbot to ask questions to an AI about Cloudflare!
+
+    1. Input your OpenAI API Key on the sidebar
+    2. Ask questions related to the Cloudflare.
+    """
+    )
+    st.session_state["messages"] = []
