@@ -157,7 +157,7 @@ class ChatCallbackHandler(BaseCallbackHandler):
 
 def llm(streaming=False):
     return ChatOpenAI(
-        model="gpt-4o-mini",
+        # model="gpt-4o-mini",
         streaming=streaming,
         temperature=0.1,
         openai_api_key=api_key,
