@@ -40,24 +40,6 @@ answers_prompt = ChatPromptTemplate.from_template(
 """
 )
 
-def get_answers(inputs):
-    docs = inputs["docs"]
-    question = inputs["question"]
-    answers_chain = answers_prompt | llm()
-    return {
-        "question": question,
-        "answers": [
-            {
-                "answer": answers_chain.invoke(
-                    {"question": question, "context": doc.page_content}
-                ).content,
-                "source": doc.metadata["source"],
-                "date": doc.metadata["lastmod"],
-            }
-            for doc in docs
-        ],
-    }
-
 choose_prompt = ChatPromptTemplate.from_messages(
     [
         (
@@ -75,6 +57,24 @@ choose_prompt = ChatPromptTemplate.from_messages(
         ("human", "{question}"),
     ]
 )
+
+def get_answers(inputs):
+    docs = inputs["docs"]
+    question = inputs["question"]
+    answers_chain = answers_prompt | llm()
+    return {
+        "question": question,
+        "answers": [
+            {
+                "answer": answers_chain.invoke(
+                    {"question": question, "context": doc.page_content}
+                ).content,
+                "source": doc.metadata["source"],
+                "date": doc.metadata["lastmod"],
+            }
+            for doc in docs
+        ],
+    }
 
 def choose_answer(inputs):
     answers = inputs["answers"]
@@ -109,9 +109,7 @@ def load_docs(api_key):
     loader = SitemapLoader(
         CLOUDFLARE_SITEMAP_URL,
         filter_urls=[
-            r"^(.*\/ai-gateway\/).*",
-            r"^(.*\/vectorize\/).*",
-            r"^(.*\/workers-ai\/).*",
+            r"^.*\/(ai-gateway|vectorize|workers-ai)\/.*$"
         ],
         parsing_function=parse_page,
     )
@@ -121,7 +119,6 @@ def load_docs(api_key):
         chunk_overlap=200,
     )
     docs = loader.load_and_split(text_splitter=splitter)
-
     Path("./.cache/embeddings").mkdir(parents=True, exist_ok=True)
     cache_dir = LocalFileStore(f"./.cache/embeddings/cloudflare")
     embeddings = OpenAIEmbeddings(
@@ -130,18 +127,6 @@ def load_docs(api_key):
     cached_embeddings = CacheBackedEmbeddings.from_bytes_store(embeddings, cache_dir)
     vector_store = FAISS.from_documents(docs, cached_embeddings)
     return vector_store.as_retriever()
-
-
-st.set_page_config(
-    page_title="SiteGPT",
-    page_icon="🖥️",
-)
-
-with st.sidebar:
-    api_key = st.text_input(
-        "Write down your OpenAI API Key",
-        placeholder="sh-123213123123123123123",
-    )
 
 def save_message(message, role):
     st.session_state["messages"].append({"message": message, "role": role})
@@ -171,20 +156,23 @@ class ChatCallbackHandler(BaseCallbackHandler):
         self.message_box.markdown(self.message)
 
 def llm(streaming=False):
-    if streaming:
-        return ChatOpenAI(
-            model="gpt-4o-mini",
-            streaming=True,
-            temperature=0.1,
-            openai_api_key=api_key,
-            callbacks=[
-                ChatCallbackHandler(),
-            ],
-        )
     return ChatOpenAI(
         model="gpt-4o-mini",
+        streaming=streaming,
         temperature=0.1,
         openai_api_key=api_key,
+        callbacks=[ChatCallbackHandler()] if streaming else None,
+    )
+
+st.set_page_config(
+    page_title="SiteGPT",
+    page_icon="🖥️",
+)
+
+with st.sidebar:
+    api_key = st.text_input(
+        "Write down your OpenAI API Key",
+        placeholder="sh-1234123412341234",
     )
 
 if api_key:
@@ -207,11 +195,12 @@ if api_key:
 else:
     st.markdown(
         """
-    Welcome!
+    ## Welcome!
                 
-    Use this chatbot to ask questions to an AI about Cloudflare!
-
-    1. Input your OpenAI API Key on the sidebar
+    ### Use this chatbot to ask questions to an AI about Cloudflare!  
+    (**It only answers questions related to Workers, AI Gateway, and Vectorize.**)
+    
+    1. Input your OpenAI API Key on the sidebar.
     2. Ask questions related to the Cloudflare.
     """
     )
