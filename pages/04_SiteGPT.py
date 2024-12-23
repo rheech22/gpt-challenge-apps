@@ -43,7 +43,7 @@ answers_prompt = ChatPromptTemplate.from_template(
 def get_answers(inputs):
     docs = inputs["docs"]
     question = inputs["question"]
-    answers_chain = answers_prompt | llm
+    answers_chain = answers_prompt | llm()
     return {
         "question": question,
         "answers": [
@@ -77,10 +77,9 @@ choose_prompt = ChatPromptTemplate.from_messages(
 )
 
 def choose_answer(inputs):
-    llm.streaming = True
     answers = inputs["answers"]
     question = inputs["question"]
-    choose_chain = choose_prompt | llm
+    choose_chain = choose_prompt | llm(streaming=True)
     condensed = "\n\n".join(
         f"{answer['answer']}\nSource:{answer['source']}\nDate:{answer['date']}\n"
         for answer in answers
@@ -171,15 +170,24 @@ class ChatCallbackHandler(BaseCallbackHandler):
         self.message += token
         self.message_box.markdown(self.message)
 
-if api_key:
-    llm = ChatOpenAI(
+def llm(streaming=False):
+    if streaming:
+        return ChatOpenAI(
+            model="gpt-4o-mini",
+            streaming=True,
+            temperature=0.1,
+            openai_api_key=api_key,
+            callbacks=[
+                ChatCallbackHandler(),
+            ],
+        )
+    return ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0.1,
         openai_api_key=api_key,
-        callbacks=[
-            ChatCallbackHandler(),
-        ],
     )
+
+if api_key:
     retriever = load_docs(api_key)
     send_message("I'm ready! Ask away!", "ai", save=False)
     paint_history()
